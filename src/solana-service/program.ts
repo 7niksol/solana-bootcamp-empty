@@ -5,13 +5,22 @@ import escrowIdl from "./escrow.json";
 import { Escrow } from "./idlType";
 import { config } from "./config";
 import { randomBytes } from "crypto";
-
 import {
   getAssociatedTokenAddressSync,
-  TOKEN_PROGRAM_ID
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
 
-const TOKEN_PROGRAM = TOKEN_PROGRAM_ID;
+const TOKEN_PROGRAMS = [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID];
+
+async function getTokenProgramForMint(connection: web3.Connection, mint: PublicKey) {
+  const mintInfo = await connection.getAccountInfo(mint);
+  if (!mintInfo) throw new Error("Mint not found");
+  for (const prog of TOKEN_PROGRAMS) {
+    if (mintInfo.owner.equals(prog)) return prog;
+  }
+  throw new Error("Unknown token program for mint: " + mint.toBase58());
+}
 
 export class EscrowProgram {
   protected program: Program<Escrow>;
@@ -44,30 +53,38 @@ export class EscrowProgram {
     tokenAmountA: number,
     tokenAmountB: number
   ) {
+    const programA = await getTokenProgramForMint(this.connection, tokenMintA);
+    const programB = await getTokenProgramForMint(this.connection, tokenMintB);
+
+    if (!programA.equals(programB)) {
+      throw new Error("Both tokens must be of the same standard (SPL or Token-2022)");
+    }
+    const TOKEN_PROGRAM = programA;
+
     const offerId = new BN(randomBytes(8));
     const offerAddress = this.createOfferId(offerId);
-  
+
     const vault = getAssociatedTokenAddressSync(
       tokenMintA,
       offerAddress,
       true,
       TOKEN_PROGRAM
     );
-  
+
     const makerTokenAccountA = getAssociatedTokenAddressSync(
       tokenMintA,
       this.wallet.publicKey,
       true,
       TOKEN_PROGRAM
     );
-  
+
     const makerTokenAccountB = getAssociatedTokenAddressSync(
       tokenMintB,
       this.wallet.publicKey,
       true,
       TOKEN_PROGRAM
     );
-  
+
     const accounts = {
       maker: this.wallet.publicKey,
       tokenMintA: tokenMintA,
@@ -106,34 +123,42 @@ export class EscrowProgram {
     tokenMintA: PublicKey,
     tokenMintB: PublicKey
   ) {
+    const programA = await getTokenProgramForMint(this.connection, tokenMintA);
+    const programB = await getTokenProgramForMint(this.connection, tokenMintB);
+
+    if (!programA.equals(programB)) {
+      throw new Error("Both tokens must be of the same standard (SPL or Token-2022)");
+    }
+    const TOKEN_PROGRAM = programA;
+
     const takerTokenAccountA = getAssociatedTokenAddressSync(
       tokenMintA,
       this.wallet.publicKey,
       true,
       TOKEN_PROGRAM
     );
-    
+
     const takerTokenAccountB = getAssociatedTokenAddressSync(
       tokenMintB,
       this.wallet.publicKey,
       true,
       TOKEN_PROGRAM
     );
-    
+
     const makerTokenAccountB = getAssociatedTokenAddressSync(
       tokenMintB,
       maker,
       true,
       TOKEN_PROGRAM
     );
-    
+
     const vault = getAssociatedTokenAddressSync(
       tokenMintA,
       offer,
       true,
       TOKEN_PROGRAM
     );
-    
+
     const accounts = {
       maker,
       offer,
@@ -142,7 +167,7 @@ export class EscrowProgram {
       takerTokenAccountB,
       vault,
       tokenProgram: TOKEN_PROGRAM,
-      makerTokenAccountB
+      makerTokenAccountB,
     };
 
     const txInstruction = await this.program.methods
